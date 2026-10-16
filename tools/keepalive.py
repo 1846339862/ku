@@ -7,8 +7,8 @@
 脚本行为（等价于一个访客的完整动作）：
   1. 打开应用网址（休眠中会先显示占位页，等待唤醒）
   2. 自动点击「一键体验」按钮进入演示账号
-  3. 等待人才库看板渲染出来（证明上传解析/索引/问答链路可用）
-  4. 截图保存为 keepalive.png，并上传为 GitHub Actions 工件供人工检查
+  3. 等待人才库看板渲染出来（同步预热模型初始化与索引构建）
+  4. 在页面停留一会儿模拟真实访客，然后截图留证
 
 用法：
     APP_URL=https://你的应用.streamlit.app python tools/keepalive.py
@@ -22,13 +22,15 @@ APP_URL = os.environ.get("APP_URL", "https://hr-talent-demo.streamlit.app")
 SCREENSHOT = os.environ.get("SCREENSHOT", "keepalive.png")
 
 # 应用独有文案，用于判断是否真正进入了应用
-MARKERS = ("一键体验", "人才库管理中心", "上传候选人简历", "智能 HR",
-           "简历源文件管理", "模型配置")
+LOGIN_MARKERS = ("一键体验", "人才库管理中心", "上传候选人简历", "智能 HR")
+DASH_MARKERS = ("人才库管理中心", "简历源文件管理", "上传候选人简历", "模型配置")
 
 
-def body_text(page) -> str:
+def page_text(page) -> str:
+    """取页面全文。用 text_content 而非 inner_text：
+    Streamlit 页面上 inner_text 在无头环境下可能返回空，text_content 更可靠。"""
     try:
-        return page.inner_text("body")[:400].replace("\n", " ")
+        return page.locator("body").text_content() or ""
     except Exception:
         return ""
 
@@ -54,40 +56,53 @@ def main() -> int:
                 print(f"OK 已访问 {APP_URL}")
                 print(f"   初始标题: {page.title() or '(无标题)'}")
 
-                # 1) 等待登录页就绪后，点击「一键体验」真正进入应用
-                clicked = False
-                for _ in range(30):
-                    page.wait_for_timeout(2_000)
-                    if any(m in body_text(page) for m in MARKERS):
-                        break
-                    try:
-                        btn = page.locator("button:has-text('一键体验')")
-                        if btn.count() > 0 and btn.first.is_visible():
-                            btn.first.click(timeout=5_000)
-                            clicked = True
-                            print("   已点击「一键体验」进入演示账号")
-                            break
-                    except Exception:
-                        pass
-                if not clicked:
-                    print("   未执行点击（可能已在应用内或按钮未出现）")
-
-                # 2) 等待人才库看板渲染（上传解析 / 索引构建都在这一步完成）
-                reached = False
+                # 1) 等待登录页渲染（休眠唤醒可能要 1-3 分钟）
+                login_ready = False
                 for _ in range(60):
                     page.wait_for_timeout(2_000)
-                    if any(m in body_text(page) for m in MARKERS):
-                        reached = True
+                    if any(m in page_text(page) for m in LOGIN_MARKERS):
+                        login_ready = True
                         break
+                print(f"   登录页就绪: {login_ready}（{time.time()-started:.0f}s）")
+
+                # 2) 点击「一键体验」进入演示账号（多种定位方式兜底）
+                clicked = False
+                for selector in ("button:has-text('一键体验')",
+                                 "text=一键体验",
+                                 "[data-testid='stButton']:has-text('一键体验')"):
+                    try:
+                        loc = page.locator(selector)
+                        if loc.count() > 0:
+                            loc.first.click(timeout=8_000)
+                            clicked = True
+                            print(f"   已点击「一键体验」（{selector}）")
+                            break
+                    except Exception as e:
+                        print(f"   点击失败 {selector}: {type(e).__name__}")
+                if not clicked:
+                    print("   未能点击一键体验（保留在登录页，保活依然有效）")
+
+                # 3) 等待人才库看板渲染（这一步会预热模型初始化与索引构建）
+                dash_ready = False
+                for _ in range(90):
+                    page.wait_for_timeout(2_000)
+                    if any(m in page_text(page) for m in DASH_MARKERS):
+                        dash_ready = True
+                        break
+                print(f"   人才库看板就绪: {dash_ready}（累计 {time.time()-started:.0f}s）")
+
+                # 4) 停留 30 秒模拟真实访客，让会话真正计入活跃
+                page.wait_for_timeout(30_000)
 
                 elapsed = time.time() - started
+                body = page_text(page)[:300].replace("\n", " ")
                 print(f"   最终标题: {page.title() or '(无标题)'}")
-                print(f"   首屏文字: {body_text(page)}")
+                print(f"   页面文字: {body}")
                 print(f"   总耗时: {elapsed:.0f}s")
-                print(f"RESULT reached_app={'yes' if reached else 'no'} "
-                      f"wake_seconds={elapsed:.0f}")
+                print(f"RESULT login_ready={login_ready} clicked={clicked} "
+                      f"dashboard_ready={dash_ready} total_seconds={elapsed:.0f}")
 
-                # 3) 截图留证（无论成功与否，便于人工诊断）
+                # 5) 截图留证
                 try:
                     page.screenshot(path=SCREENSHOT, full_page=False)
                     print(f"   截图已保存: {SCREENSHOT}")
