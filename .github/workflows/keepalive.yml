@@ -37,3 +37,13 @@ jobs:
         env:
           APP_URL: https://hr-talent-demo.streamlit.app
         run: python tools/keepalive.py
+
+      # 截图留证：无论成功与否都上传，便于人工检查页面真实状态
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepalive-screenshot
+          path: keepalive.png
+          if-no-files-found: warn
+          retention-days: 7
