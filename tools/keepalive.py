@@ -10,6 +10,7 @@
 
 import os
 import sys
+import time
 
 APP_URL = os.environ.get("APP_URL", "https://hr-talent-demo.streamlit.app")
 
@@ -29,31 +30,35 @@ def main() -> int:
                            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             )
             try:
+                started = time.time()
                 page.goto(APP_URL, wait_until="domcontentloaded", timeout=120_000)
                 title = page.title() or "(无标题)"
                 print(f"OK 已访问 {APP_URL}")
-                print(f"   页面标题: {title}")
+                print(f"   初始页面标题: {title}")
 
-                # Streamlit 首屏渲染是异步的，轮询等待正文出现（最多约 20 秒）
-                body = ""
-                for _ in range(10):
+                # 应用可能处于休眠/唤醒中（会先显示 "Hosted with Streamlit" 占位页），
+                # 持续轮询直到本应用内容真正渲染出来，最长约 90 秒。
+                # 停留到完全唤醒很重要：只有真正进入应用才算一次有效访问，才能续上休眠计时。
+                markers = ("一键体验", "人才库管理中心", "上传候选人简历", "智能 HR")
+                body, reached = "", False
+                for _ in range(45):
                     page.wait_for_timeout(2_000)
                     try:
                         body = page.inner_text("body")[:300].replace("\n", " ")
                     except Exception:
                         body = ""
-                    if body.strip():
+                    if any(m in body for m in markers):
+                        reached = True
                         break
-                print(f"   首屏文字: {body}")
 
-                # 到达证据：页面标题由 st.set_page_config 设置，是本应用独有的，
-                # 比正文更可靠（正文可能还没渲染完）；正文特征作为兜底校验
-                markers = ("一键体验", "人才库管理中心", "上传候选人简历")
-                reached = ("智能 HR" in title) or any(m in body for m in markers)
+                elapsed = time.time() - started
+                print(f"   最终页面标题: {page.title() or '(无标题)'}")
+                print(f"   首屏文字: {body}")
+                print(f"   耗时: {elapsed:.0f}s")
                 if reached:
-                    print("RESULT reached_app=yes 已到达应用页面，保活有效")
+                    print(f"RESULT reached_app=yes 已进入应用（唤醒耗时 {elapsed:.0f}s），保活有效")
                 else:
-                    print("RESULT reached_app=no 未到达应用页面（仍被认证网关拦截或页面异常）")
+                    print("RESULT reached_app=no 90 秒内未进入应用（可能仍在唤醒或页面异常）")
             except Exception as e:
                 print(f"WARN 访问异常（不影响下次重试）: {type(e).__name__}: {e}")
             finally:
