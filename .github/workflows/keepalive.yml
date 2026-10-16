@@ -1,0 +1,39 @@
+name: Keep Demo Awake
+
+# 用途：定时用无头浏览器打开 demo 应用，防止 Streamlit Cloud 免费档休眠。
+# 为什么必须用浏览器：Streamlit 的认证网关依赖 JS 执行才放行，
+# 普通 HTTP 探针（curl / UptimeRobot）会被 303 弹到登录页，永远触达不到应用。
+# 公开仓库的 Actions 额度免费且充足；每次运行约 1-2 分钟。
+
+on:
+  schedule:
+    # 每 15 分钟一次（UTC）。Streamlit 免费档约 1 小时无访问会休眠，15 分钟足够续上
+    - cron: "*/15 * * * *"
+  workflow_dispatch: # 允许在 Actions 页面或通过 API 手动触发，便于立即验证
+
+# 保活不需要并发：上一次没跑完就直接取消，避免堆积
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Playwright + Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          python -m playwright install chromium --with-deps
+
+      - name: Open demo app (wake up)
+        env:
+          APP_URL: https://hr-talent-demo.streamlit.app
+        run: python tools/keepalive.py
