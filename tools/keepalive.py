@@ -63,19 +63,26 @@ def main() -> int:
                 print(f"   应用就绪: {app_ready(page)}（唤醒耗时 {wake_s:.0f}s）")
 
                 # 2) 点击「一键体验」进入演示账号
+                # 注意：标题就绪后 Streamlit 的 React 组件还需时间 hydrate，
+                # 按钮不会立刻出现在 DOM 里，必须轮询等待而不是立即点。
                 clicked = False
-                for selector in ("button:has-text('一键体验')", "text=一键体验"):
-                    try:
-                        loc = page.locator(selector)
-                        if loc.count() > 0:
-                            loc.first.click(timeout=8_000)
-                            clicked = True
-                            print(f"   已点击「一键体验」（{selector}）")
-                            break
-                    except Exception as e:
-                        print(f"   点击失败 {selector}: {type(e).__name__}")
+                for _ in range(30):
+                    for selector in ("button:has-text('一键体验')", "text=一键体验"):
+                        try:
+                            loc = page.locator(selector)
+                            if loc.count() > 0 and loc.first.is_visible():
+                                loc.first.click(timeout=8_000)
+                                clicked = True
+                                print(f"   已点击「一键体验」（{selector}）")
+                                break
+                        except Exception as e:
+                            print(f"   点击失败 {selector}: {type(e).__name__}")
+                    if clicked:
+                        break
+                    page.wait_for_timeout(1_000)
                 if not clicked:
-                    print("   未点击（按钮未出现或已在应用内）")
+                    n = page.locator("button").count()
+                    print(f"   未点击（30 秒内按钮未出现，当前页面按钮数={n}）")
 
                 # 3) 进入演示账号后等待看板渲染（预热模型与索引）
                 page.wait_for_timeout(5_000)
