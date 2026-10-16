@@ -654,7 +654,7 @@ jd_text = st.text_area(
     "粘贴岗位 JD 描述：", height=160, key="jd_text",
     placeholder="例如：本科及以上学历，精通 Python，熟悉 Vue，3 年以上后端开发经验……",
 )
-candidates = get_all_resumes_from_db()
+candidates = get_all_resumes_from_db(CURRENT_USER)
 cand_options = [r["源文件"] for r in candidates] if candidates else []
 selected = st.multiselect("选择参与匹配的候选人（可多选）：", options=cand_options, key="jd_cands")
 if st.button("🚀 开始 JD 智能匹配", key="jd_match_btn", disabled=not (jd_text.strip() and selected)):
