@@ -30,18 +30,27 @@ def main() -> int:
             )
             try:
                 page.goto(APP_URL, wait_until="domcontentloaded", timeout=120_000)
-                # 等 Streamlit 建立 WebSocket 连接并完成首屏渲染
-                page.wait_for_timeout(10_000)
                 title = page.title() or "(无标题)"
-                body = page.inner_text("body")[:200].replace("\n", " ")
                 print(f"OK 已访问 {APP_URL}")
                 print(f"   页面标题: {title}")
+
+                # Streamlit 首屏渲染是异步的，轮询等待正文出现（最多约 20 秒）
+                body = ""
+                for _ in range(10):
+                    page.wait_for_timeout(2_000)
+                    try:
+                        body = page.inner_text("body")[:300].replace("\n", " ")
+                    except Exception:
+                        body = ""
+                    if body.strip():
+                        break
                 print(f"   首屏文字: {body}")
 
-                # 校验是否真正进入了应用（而不是停在 Streamlit 平台登录页）
-                # 「一键体验」「人才库管理中心」是本应用独有文案，平台登录页不会出现
-                markers = ("一键体验", "人才库管理中心", "上传候选人简历", "智能 HR")
-                if any(m in body for m in markers):
+                # 到达证据：页面标题由 st.set_page_config 设置，是本应用独有的，
+                # 比正文更可靠（正文可能还没渲染完）；正文特征作为兜底校验
+                markers = ("一键体验", "人才库管理中心", "上传候选人简历")
+                reached = ("智能 HR" in title) or any(m in body for m in markers)
+                if reached:
                     print("RESULT reached_app=yes 已到达应用页面，保活有效")
                 else:
                     print("RESULT reached_app=no 未到达应用页面（仍被认证网关拦截或页面异常）")
