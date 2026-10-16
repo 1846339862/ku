@@ -36,6 +36,22 @@ def app_ready(page) -> bool:
         return False
 
 
+def find_in_any_frame(page, css: str):
+    """在页面所有 frame 中查找元素。
+
+    为什么需要：Streamlit Cloud 的认证流程会把应用内容放进 iframe 子框架，
+    page.locator 默认只搜主框架，会得到 count=0（而截图里明明有按钮），
+    必须遍历 page.frames 才能定位到。"""
+    for frame in page.frames:
+        try:
+            loc = frame.locator(css)
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            continue
+    return None
+
+
 def main() -> int:
     try:
         from playwright.sync_api import sync_playwright
@@ -69,8 +85,8 @@ def main() -> int:
                 for _ in range(90):  # 冷容器需先完成重依赖导入，控件渲染可能延迟 30-60 秒
                     for selector in ("button:has-text('一键体验')", "text=一键体验"):
                         try:
-                            loc = page.locator(selector)
-                            if loc.count() > 0 and loc.first.is_visible():
+                            loc = find_in_any_frame(page, selector)
+                            if loc is not None and loc.first.is_visible():
                                 loc.first.click(timeout=8_000)
                                 clicked = True
                                 print(f"   已点击「一键体验」（{selector}）")
@@ -81,8 +97,9 @@ def main() -> int:
                         break
                     page.wait_for_timeout(1_000)
                 if not clicked:
-                    n = page.locator("button").count()
-                    print(f"   未点击（90 秒内按钮未出现，当前页面按钮数={n}）")
+                    n = sum(len(f.locator("button").all()) for f in page.frames)
+                    print(f"   未点击（90 秒内按钮未出现，全部框架按钮数={n}，"
+                          f"框架数={len(page.frames)}）")
 
                 # 3) 进入演示账号后等待看板渲染（预热模型与索引）
                 page.wait_for_timeout(5_000)
