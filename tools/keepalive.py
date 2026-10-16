@@ -10,6 +10,11 @@
   3. 等待人才库看板渲染出来（同步预热模型初始化与索引构建）
   4. 在页面停留一会儿模拟真实访客，然后截图留证
 
+判据说明：用 page.title() 判断应用是否就绪最可靠——
+st.set_page_config 设置的标题「智能 HR…」只在应用真正加载后出现；
+而 body 的 text_content 在 Streamlit 页面会混入外壳固有的
+<noscript> 文本，不适合做判据（实测踩坑）。
+
 用法：
     APP_URL=https://你的应用.streamlit.app python tools/keepalive.py
 """
@@ -20,19 +25,15 @@ import time
 
 APP_URL = os.environ.get("APP_URL", "https://hr-talent-demo.streamlit.app")
 SCREENSHOT = os.environ.get("SCREENSHOT", "keepalive.png")
-
-# 应用独有文案，用于判断是否真正进入了应用
-LOGIN_MARKERS = ("一键体验", "人才库管理中心", "上传候选人简历", "智能 HR")
-DASH_MARKERS = ("人才库管理中心", "简历源文件管理", "上传候选人简历", "模型配置")
+APP_TITLE_MARK = "智能 HR"
 
 
-def page_text(page) -> str:
-    """取页面全文。用 text_content 而非 inner_text：
-    Streamlit 页面上 inner_text 在无头环境下可能返回空，text_content 更可靠。"""
+def app_ready(page) -> bool:
+    """应用是否已加载：标题由 st.set_page_config 设置，是最可靠的判据。"""
     try:
-        return page.locator("body").text_content() or ""
+        return APP_TITLE_MARK in (page.title() or "")
     except Exception:
-        return ""
+        return False
 
 
 def main() -> int:
@@ -54,22 +55,16 @@ def main() -> int:
                 started = time.time()
                 page.goto(APP_URL, wait_until="domcontentloaded", timeout=120_000)
                 print(f"OK 已访问 {APP_URL}")
-                print(f"   初始标题: {page.title() or '(无标题)'}")
 
-                # 1) 等待登录页渲染（休眠唤醒可能要 1-3 分钟）
-                login_ready = False
-                for _ in range(60):
-                    page.wait_for_timeout(2_000)
-                    if any(m in page_text(page) for m in LOGIN_MARKERS):
-                        login_ready = True
-                        break
-                print(f"   登录页就绪: {login_ready}（{time.time()-started:.0f}s）")
+                # 1) 等待应用加载完成（从休眠唤醒通常 30-90 秒）
+                while not app_ready(page) and time.time() - started < 180:
+                    page.wait_for_timeout(1_000)
+                wake_s = time.time() - started
+                print(f"   应用就绪: {app_ready(page)}（唤醒耗时 {wake_s:.0f}s）")
 
-                # 2) 点击「一键体验」进入演示账号（多种定位方式兜底）
+                # 2) 点击「一键体验」进入演示账号
                 clicked = False
-                for selector in ("button:has-text('一键体验')",
-                                 "text=一键体验",
-                                 "[data-testid='stButton']:has-text('一键体验')"):
+                for selector in ("button:has-text('一键体验')", "text=一键体验"):
                     try:
                         loc = page.locator(selector)
                         if loc.count() > 0:
@@ -80,27 +75,20 @@ def main() -> int:
                     except Exception as e:
                         print(f"   点击失败 {selector}: {type(e).__name__}")
                 if not clicked:
-                    print("   未能点击一键体验（保留在登录页，保活依然有效）")
+                    print("   未点击（按钮未出现或已在应用内）")
 
-                # 3) 等待人才库看板渲染（这一步会预热模型初始化与索引构建）
-                dash_ready = False
-                for _ in range(90):
-                    page.wait_for_timeout(2_000)
-                    if any(m in page_text(page) for m in DASH_MARKERS):
-                        dash_ready = True
-                        break
-                print(f"   人才库看板就绪: {dash_ready}（累计 {time.time()-started:.0f}s）")
+                # 3) 进入演示账号后等待看板渲染（预热模型与索引）
+                page.wait_for_timeout(5_000)
+                dash_s = time.time() - started
+                print(f"   已进入演示账号并停留（累计 {dash_s:.0f}s）")
 
-                # 4) 停留 30 秒模拟真实访客，让会话真正计入活跃
+                # 4) 再停留 30 秒模拟真实访客，确保会话计入活跃
                 page.wait_for_timeout(30_000)
 
                 elapsed = time.time() - started
-                body = page_text(page)[:300].replace("\n", " ")
                 print(f"   最终标题: {page.title() or '(无标题)'}")
-                print(f"   页面文字: {body}")
-                print(f"   总耗时: {elapsed:.0f}s")
-                print(f"RESULT login_ready={login_ready} clicked={clicked} "
-                      f"dashboard_ready={dash_ready} total_seconds={elapsed:.0f}")
+                print(f"RESULT app_ready={app_ready(page)} clicked={clicked} "
+                      f"wake_seconds={wake_s:.0f} total_seconds={elapsed:.0f}")
 
                 # 5) 截图留证
                 try:
